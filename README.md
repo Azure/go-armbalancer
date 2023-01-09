@@ -30,7 +30,7 @@ Performance under high concurrency may also improve relative to HTTP1.1 since th
 armresources.NewClient("{{subscriptionID}}", cred, &arm.ClientOptions{
 	ClientOptions: policy.ClientOptions{
 		Transport: &http.Client{
-			Transport: armbalancer.NewWithDefaults(nil),
+			Transport: armbalancer.New(armbalancer.Options{}),
 		},
 	},
 })

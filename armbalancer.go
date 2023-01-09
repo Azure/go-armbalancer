@@ -12,27 +12,51 @@ import (
 
 const rateLimitHeaderPrefix = "X-Ms-Ratelimit-Remaining-"
 
-// New wraps a transport to provide smart connection pooling and client-side load balancing.
-// Only valid for requests to the given host.
-//
-// Connections are recycled when recycleThreshold is <= the lowest value of any X-Ms-Ratelimit-Remaining-* header.
-//
-// minReqsBeforeRecycle is a safeguard to prevent frequent connection churn in the unlikely event
-// that a connections lands on an ARM instance that already has a depleted rate limiting quota.
-func New(transport *http.Transport, host string, poolSize, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
-	t := &transportPool{pool: make([]http.RoundTripper, poolSize)}
-	for i := range t.pool {
-		t.pool[i] = newRecyclableTransport(i, transport, host, recycleThreshold, minReqsBeforeRecycle)
-	}
-	return t
+type Options struct {
+	Transport *http.Transport
+
+	// Host is the only host that can be reached through the round tripper.
+	// Default: management.azure.com
+	Host string
+
+	// PoolSize is the max number of connections that will be created by the connection pool.
+	// Default: 8
+	PoolSize int
+
+	// RecycleThreshold is the lowest value of any X-Ms-Ratelimit-Remaining-* header that
+	// can be seen before the associated connection will be re-established.
+	// Default: 100
+	RecycleThreshold int64
+
+	// MinReqsBeforeRecycle is a safeguard to prevent frequent connection churn in the unlikely event
+	// that a connections lands on an ARM instance that already has a depleted rate limiting quota.
+	// Default: 10
+	MinReqsBeforeRecycle int64
 }
 
-// NewWithDefaults calls New with sane default values for most arguments.
-func NewWithDefaults(transport *http.Transport) http.RoundTripper {
-	if transport == nil {
-		transport = http.DefaultTransport.(*http.Transport)
+// New wraps a transport to provide smart connection pooling and client-side load balancing.
+func New(opts Options) http.RoundTripper {
+	if opts.Transport == nil {
+		opts.Transport = http.DefaultTransport.(*http.Transport)
 	}
-	return New(transport, "management.azure.com", 8, 100, 10)
+	if opts.Host == "" {
+		opts.Host = "management.azure.com"
+	}
+	if opts.PoolSize == 0 {
+		opts.PoolSize = 8
+	}
+	if opts.RecycleThreshold == 0 {
+		opts.RecycleThreshold = 100
+	}
+	if opts.MinReqsBeforeRecycle == 0 {
+		opts.MinReqsBeforeRecycle = 10
+	}
+
+	t := &transportPool{pool: make([]http.RoundTripper, opts.PoolSize)}
+	for i := range t.pool {
+		t.pool[i] = newRecyclableTransport(i, opts.Transport, opts.Host, opts.RecycleThreshold, opts.MinReqsBeforeRecycle)
+	}
+	return t
 }
 
 type transportPool struct {

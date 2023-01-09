@@ -21,6 +21,10 @@ func TestSoak(t *testing.T) {
 		lock.Lock()
 		defer lock.Unlock()
 
+		if r.Proto != "HTTP/2.0" {
+			t.Errorf("received request with proto: %s", r.Proto)
+		}
+
 		if r.Header.Get("Test") != "true" {
 			return // don't handle any requests from outside the test
 		}
@@ -43,11 +47,18 @@ func TestSoak(t *testing.T) {
 			closed++
 		}
 	}
-	svr.Start()
+	svr.EnableHTTP2 = true
+	svr.StartTLS()
 	defer svr.Close()
 
 	u, _ := url.Parse(svr.URL)
-	client := &http.Client{Transport: New(http.DefaultTransport.(*http.Transport), u.Host, 8, 5, 6)}
+	client := &http.Client{Transport: New(Options{
+		Transport:            svr.Client().Transport.(*http.Transport),
+		Host:                 u.Host,
+		PoolSize:             8,
+		RecycleThreshold:     5,
+		MinReqsBeforeRecycle: 6,
+	})}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
