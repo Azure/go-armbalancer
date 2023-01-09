@@ -96,10 +96,15 @@ func (t *recyclableTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	t.lock.Lock()
 	tx := t.current
 	wg := t.activeCount
+	wg.Add(1)
 	t.lock.Unlock()
 
-	wg.Add(1)
-	defer wg.Add(-1)
+	defer func() {
+		t.lock.Lock()
+		wg.Add(-1)
+		t.lock.Unlock()
+	}()
+
 	resp, err := tx.RoundTrip(req)
 	atomic.AddInt64(&t.counter, 1)
 
