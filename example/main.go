@@ -25,7 +25,7 @@ func main() {
 		panic(err)
 	}
 
-	client := &http.Client{Transport: armbalancer.New(http.DefaultTransport.(*http.Transport), 4, 11997, 0)}
+	client := &http.Client{Transport: armbalancer.New(http.DefaultTransport.(*http.Transport), "management.azure.com", 4, 11997, 0)}
 
 	for {
 		do(client, token)

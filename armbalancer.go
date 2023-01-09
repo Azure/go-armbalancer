@@ -1,6 +1,7 @@
 package armbalancer
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -12,27 +13,23 @@ import (
 const rateLimitHeaderPrefix = "X-Ms-Ratelimit-Remaining-"
 
 // New wraps a transport to provide smart connection pooling and client-side load balancing.
-// Assumes all requests using the returned transport will have the same host (ARM).
+// Only valid for requests to the given host.
 //
 // Connections are recycled when recycleThreshold is <= the lowest value of any X-Ms-Ratelimit-Remaining-* header.
 //
 // minReqsBeforeRecycle is a safeguard to prevent frequent connection churn in the unlikely event
 // that a connections lands on an ARM instance that already has a depleted rate limiting quota.
-func New(transport *http.Transport, poolSize, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
-	return newTransportPool(http.DefaultTransport.(*http.Transport), poolSize, recycleThreshold, minReqsBeforeRecycle)
+func New(transport *http.Transport, host string, poolSize, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
+	t := &transportPool{pool: make([]http.RoundTripper, poolSize)}
+	for i := range t.pool {
+		t.pool[i] = newRecyclableTransport(i, transport, host, recycleThreshold, minReqsBeforeRecycle)
+	}
+	return t
 }
 
 type transportPool struct {
 	pool   []http.RoundTripper
 	cursor int64
-}
-
-func newTransportPool(parent *http.Transport, size, recycleThreshold, minReqsBeforeRecycle int64) *transportPool {
-	t := &transportPool{pool: make([]http.RoundTripper, size)}
-	for i := range t.pool {
-		t.pool[i] = newRecyclableTransport(i, parent, recycleThreshold, minReqsBeforeRecycle)
-	}
-	return t
 }
 
 func (t *transportPool) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -42,6 +39,7 @@ func (t *transportPool) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type recyclableTransport struct {
 	lock        sync.Mutex // only hold while copying pointer - not calling RoundTrip
+	host        string
 	current     *http.Transport
 	counter     int64 // atomic
 	activeCount *sync.WaitGroup
@@ -49,9 +47,12 @@ type recyclableTransport struct {
 	signal      chan struct{}
 }
 
-func newRecyclableTransport(id int, parent *http.Transport, recycleThreshold, minReqsBeforeRecycle int64) *recyclableTransport {
+func newRecyclableTransport(id int, parent *http.Transport, host string, recycleThreshold, minReqsBeforeRecycle int64) *recyclableTransport {
+	tx := parent.Clone()
+	tx.MaxConnsPerHost = 1
 	r := &recyclableTransport{
-		current:     parent.Clone(),
+		host:        host,
+		current:     tx,
 		activeCount: &sync.WaitGroup{},
 		state:       newConnState(),
 		signal:      make(chan struct{}, 1),
@@ -80,6 +81,10 @@ func newRecyclableTransport(id int, parent *http.Transport, recycleThreshold, mi
 }
 
 func (t *recyclableTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host != t.host {
+		return nil, fmt.Errorf("host %q is not supported by the configured ARM balancer", req.URL.Host)
+	}
+
 	t.lock.Lock()
 	tx := t.current
 	wg := t.activeCount
