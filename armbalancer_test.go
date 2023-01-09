@@ -52,6 +52,7 @@ func TestSoak(t *testing.T) {
 				resp, err := client.Do(req)
 				if err != nil {
 					t.Error(err)
+					continue
 				}
 				resp.Body.Close()
 			}
@@ -80,7 +81,7 @@ func TestSoak(t *testing.T) {
 	}
 
 	// Since connection recycling is async, we can't expect 100% conformance to the configured limits
-	thres := len(reqCountByAddr) / 4 // 25%
+	thres := len(reqCountByAddr) / 10
 	if l := len(overLimit); l > thres {
 		t.Errorf("%d clients exceeded the rate limit: %+s", l, overLimit)
 	}

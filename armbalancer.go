@@ -130,8 +130,6 @@ func newConnState() *connState {
 
 func (c *connState) ApplyHeader(h http.Header) {
 	c.lock.Lock()
-	defer c.lock.Unlock()
-
 	for key, vals := range h {
 		if !strings.HasPrefix(key, "X-Ms-Ratelimit-Remaining-") {
 			continue
@@ -142,17 +140,17 @@ func (c *connState) ApplyHeader(h http.Header) {
 		}
 		c.types[key[len(rateLimitHeaderPrefix):]] = n
 	}
+	c.lock.Unlock()
 }
 
 func (c *connState) Min() int64 {
 	c.lock.Lock()
-	defer c.lock.Unlock()
-
 	var min int64 = math.MaxInt64
 	for _, val := range c.types {
 		if val < min {
 			min = val
 		}
 	}
+	c.lock.Unlock()
 	return min
 }
