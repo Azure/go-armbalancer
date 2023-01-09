@@ -140,6 +140,9 @@ func (c *connState) ApplyHeader(h http.Header) {
 }
 
 func (c *connState) Min() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	var min int64 = math.MaxInt64
 	for _, val := range c.types {
 		if val < min {
