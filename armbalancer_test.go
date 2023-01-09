@@ -2,6 +2,7 @@ package armbalancer
 
 import (
 	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +17,7 @@ func TestSoak(t *testing.T) {
 	reqCountByAddr := map[string]int{}
 	var lock sync.Mutex
 	var totalRequests int
-	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	svr := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lock.Lock()
 		defer lock.Unlock()
 
@@ -36,6 +37,13 @@ func TestSoak(t *testing.T) {
 		w.Header().Set("X-Ms-Ratelimit-Remaining-Dummy", "10")
 		w.Header().Set("X-Ms-Ratelimit-Remaining-Invalid", "not-a-number")
 	}))
+	var closed int
+	svr.Config.ConnState = func(c net.Conn, cs http.ConnState) {
+		if cs == http.StateClosed {
+			closed++
+		}
+	}
+	svr.Start()
 	defer svr.Close()
 
 	u, _ := url.Parse(svr.URL)
@@ -67,6 +75,10 @@ func TestSoak(t *testing.T) {
 
 	if l := len(reqCountByAddr); l < 100 {
 		t.Errorf("pool couldn't be working correctly as only %d connections to the server were created", l)
+	}
+
+	if closed < len(reqCountByAddr)/4 {
+		t.Errorf("expected at least 25 percent of connections to be closed but only %d were closed", closed)
 	}
 
 	overLimit := []string{}
