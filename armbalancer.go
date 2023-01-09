@@ -29,6 +29,9 @@ func New(transport *http.Transport, host string, poolSize, recycleThreshold, min
 
 // NewWithDefaults calls New with sane default values for most arguments.
 func NewWithDefaults(transport *http.Transport) http.RoundTripper {
+	if transport == nil {
+		transport = http.DefaultTransport.(*http.Transport)
+	}
 	return New(transport, "management.azure.com", 8, 100, 10)
 }
 
