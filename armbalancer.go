@@ -60,7 +60,7 @@ func newRecyclableTransport(id int, parent *http.Transport, host string, recycle
 	tx.MaxConnsPerHost = 1
 	r := &recyclableTransport{
 		host:        host,
-		current:     tx,
+		current:     tx.Clone(),
 		activeCount: &sync.WaitGroup{},
 		state:       newConnState(),
 		signal:      make(chan struct{}, 1),
@@ -75,7 +75,7 @@ func newRecyclableTransport(id int, parent *http.Transport, host string, recycle
 			r.lock.Lock()
 			previous := r.current
 			previousActiveCount := r.activeCount
-			r.current = parent.Clone()
+			r.current = tx.Clone()
 			atomic.StoreInt64(&r.counter, 0)
 			r.activeCount = &sync.WaitGroup{}
 			r.lock.Unlock()
