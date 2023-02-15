@@ -54,7 +54,7 @@ func New(opts Options) http.RoundTripper {
 
 	t := &transportPool{pool: make([]http.RoundTripper, opts.PoolSize)}
 	for i := range t.pool {
-		t.pool[i] = newRecyclableTransport(i, opts.Transport, opts.Host, opts.RecycleThreshold, opts.MinReqsBeforeRecycle)
+		t.pool[i] = newRecyclableTransport(i, &opts)
 	}
 	return t
 }
@@ -79,11 +79,11 @@ type recyclableTransport struct {
 	signal      chan struct{}
 }
 
-func newRecyclableTransport(id int, parent *http.Transport, host string, recycleThreshold, minReqsBeforeRecycle int64) *recyclableTransport {
-	tx := parent.Clone()
+func newRecyclableTransport(id int, opts *Options) *recyclableTransport {
+	tx := opts.Transport.Clone()
 	tx.MaxConnsPerHost = 1
 	r := &recyclableTransport{
-		host:        host,
+		host:        opts.Host,
 		current:     tx.Clone(),
 		activeCount: &sync.WaitGroup{},
 		state:       newConnState(),
@@ -91,7 +91,7 @@ func newRecyclableTransport(id int, parent *http.Transport, host string, recycle
 	}
 	go func() {
 		for range r.signal {
-			if r.state.Min() > recycleThreshold || atomic.LoadInt64(&r.counter) < minReqsBeforeRecycle {
+			if r.state.Min() > opts.RecycleThreshold || atomic.LoadInt64(&r.counter) < opts.MinReqsBeforeRecycle {
 				continue
 			}
 
