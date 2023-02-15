@@ -154,6 +154,8 @@ func TestHooks(t *testing.T) {
 		resp.Body.Close()
 	}
 
+	lock.Lock()
+	defer lock.Unlock()
 	if recycleHookCalls == 0 {
 		t.Error("OnConnRecycle was not called")
 	}
