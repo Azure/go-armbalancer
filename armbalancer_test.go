@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSoak(t *testing.T) {
@@ -110,5 +111,50 @@ func TestSoak(t *testing.T) {
 	}
 	if l := len(underMin); l > thres {
 		t.Errorf("%d clients undershot the configured min requests per connection: %+s", l, underMin)
+	}
+}
+
+func TestHooks(t *testing.T) {
+	svr := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Ms-Ratelimit-Remaining-Test", "1")
+	}))
+	svr.EnableHTTP2 = true
+	svr.StartTLS()
+	defer svr.Close()
+
+	var lock sync.Mutex
+	recycleHookCalls := 0
+	u, _ := url.Parse(svr.URL)
+	client := &http.Client{Transport: New(Options{
+		Transport:            svr.Client().Transport.(*http.Transport),
+		Host:                 u.Host,
+		PoolSize:             8,
+		RecycleThreshold:     5,
+		MinReqsBeforeRecycle: 2,
+		OnConnRecycle: func(connID int, requestCount int64, connAge, drainLatency time.Duration) {
+			lock.Lock()
+			defer lock.Unlock()
+
+			recycleHookCalls++
+			if requestCount != 2 {
+				t.Logf("unexpected request count: %d", requestCount)
+			}
+
+			t.Logf("OnConnRecycle: connID=%d requestCount=%d connAge=%s drainLatency=%s", connID, requestCount, connAge, drainLatency)
+		},
+	})}
+
+	for i := 0; i < 10; i++ {
+		req, _ := http.NewRequest("GET", svr.URL, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		resp.Body.Close()
+	}
+
+	if recycleHookCalls == 0 {
+		t.Error("OnConnRecycle was not called")
 	}
 }

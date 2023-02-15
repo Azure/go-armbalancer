@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const rateLimitHeaderPrefix = "X-Ms-Ratelimit-Remaining-"
@@ -32,6 +33,10 @@ type Options struct {
 	// that a connections lands on an ARM instance that already has a depleted rate limiting quota.
 	// Default: 10
 	MinReqsBeforeRecycle int64
+
+	// OnConnRecycle is an optional hook that allows the application to emit some telemetry when
+	// armbalancer recycles pooled connections.
+	OnConnRecycle func(connID int, requestCount int64, connAge, drainLatency time.Duration)
 }
 
 // New wraps a transport to provide smart connection pooling and client-side load balancing.
@@ -90,6 +95,7 @@ func newRecyclableTransport(id int, opts *Options) *recyclableTransport {
 		signal:      make(chan struct{}, 1),
 	}
 	go func() {
+		start := time.Now()
 		for range r.signal {
 			if r.state.Min() > opts.RecycleThreshold || atomic.LoadInt64(&r.counter) < opts.MinReqsBeforeRecycle {
 				continue
@@ -100,13 +106,18 @@ func newRecyclableTransport(id int, opts *Options) *recyclableTransport {
 			previous := r.current
 			previousActiveCount := r.activeCount
 			r.current = tx.Clone()
-			atomic.StoreInt64(&r.counter, 0)
+			requestCount := atomic.SwapInt64(&r.counter, 0)
 			r.activeCount = &sync.WaitGroup{}
 			r.lock.Unlock()
 
 			// Wait for all active requests against the previous transport to complete before closing its idle connections
+			drainStart := time.Now()
 			previousActiveCount.Wait()
 			previous.CloseIdleConnections()
+			if hook := opts.OnConnRecycle; hook != nil {
+				hook(id, requestCount, time.Since(start), time.Since(drainStart))
+			}
+			start = time.Now()
 		}
 	}()
 	return r
