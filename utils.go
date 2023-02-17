@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-func modifyTransportHostIfNeeded(reqHost, transportHost string) string {
+func getTransportHostToCompare(reqHost, transportHost string) string {
 	idx := strings.Index(reqHost, ":")
 	idx1 := strings.Index(transportHost, ":")
 

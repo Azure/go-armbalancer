@@ -11,7 +11,7 @@ type testCase struct {
 	expected  string
 }
 
-func TestModifyTransportHostIfNeeded(t *testing.T) {
+func TestGetTransportHostToCompare(t *testing.T) {
 	cases := []testCase{
 		{
 			name:      "no modify since all without port number",
@@ -41,7 +41,7 @@ func TestModifyTransportHostIfNeeded(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := modifyTransportHostIfNeeded(c.reqHost, c.transHost)
+			v := getTransportHostToCompare(c.reqHost, c.transHost)
 			if v != c.expected {
 				t.Errorf("expected host %q is not same as we get %q", c.expected, v)
 			}
