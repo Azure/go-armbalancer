@@ -1,6 +1,7 @@
 package armbalancer
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
@@ -80,7 +81,7 @@ func TestSoak(t *testing.T) {
 	wg.Wait()
 
 	_, err := client.Get("http://not-the-host")
-	if err == nil || err.Error() != `Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer` {
+	if err == nil || err.Error() != fmt.Sprintf(`Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer, supported host name is "127.0.0.1"`) {
 		t.Errorf("expected error when requesting host other than the one configured, got: %s", err)
 	}
 

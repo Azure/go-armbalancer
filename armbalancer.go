@@ -113,8 +113,9 @@ func newRecyclableTransport(id int, parent *http.Transport, host string, recycle
 }
 
 func (t *recyclableTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.host = modifyTransportHostIfNeeded(req.URL.Host, t.host)
 	if req.URL.Host != t.host {
-		return nil, fmt.Errorf("host %q is not supported by the configured ARM balancer", req.URL.Host)
+		return nil, fmt.Errorf("host %q is not supported by the configured ARM balancer, supported host name is %q", req.URL.Host, t.host)
 	}
 
 	t.lock.Lock()
