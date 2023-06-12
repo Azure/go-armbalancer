@@ -81,7 +81,7 @@ func TestSoak(t *testing.T) {
 	wg.Wait()
 
 	_, err := client.Get("http://not-the-host")
-	if err == nil || err.Error() != fmt.Sprintf(`Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer, supported host name is %q`, u.Host) {
+	if err == nil || err.Error() != fmt.Sprintf(`Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer, supported host name is %q`, u.Hostname()) {
 		t.Errorf("expected error when requesting host other than the one configured, got: %s", err)
 	}
 
@@ -118,6 +118,7 @@ type testCase struct {
 	name      string
 	reqHost   string
 	transHost string
+	transPort string
 	expected  bool
 }
 
@@ -127,30 +128,35 @@ func TestCompareHost(t *testing.T) {
 			name:      "matched since all without port number",
 			reqHost:   "host.com",
 			transHost: "host.com",
+			transPort: "443",
 			expected:  true,
 		},
 		{
 			name:      "matched since all with port number",
 			reqHost:   "host.com:443",
-			transHost: "host.com:443",
+			transHost: "host.com",
+			transPort: "443",
 			expected:  true,
 		},
 		{
 			name:      "matched with appending port name",
 			reqHost:   "host.com:443",
 			transHost: "host.com",
+			transPort: "443",
 			expected:  true,
 		},
 		{
 			name:      "matched with removing port name",
 			reqHost:   "host.com",
-			transHost: "host.com:443",
+			transHost: "host.com",
+			transPort: "443",
 			expected:  true,
 		},
 		{
 			name:      "not matched since different port number",
 			reqHost:   "host.com:443",
-			transHost: "host.com:11254",
+			transHost: "host.com",
+			transPort: "11254",
 			expected:  false,
 		},
 		{
@@ -162,31 +168,116 @@ func TestCompareHost(t *testing.T) {
 		{
 			name:      "not matched since differnt host name with port number",
 			reqHost:   "host.com:443",
-			transHost: "abc.com:443",
+			transHost: "abc.com",
+			transPort: "443",
 			expected:  false,
 		},
 		{
 			name:      "not matched since differnt host name with port number for reqHost only",
 			reqHost:   "host.com:443",
 			transHost: "abc.com",
+			transPort: "443",
 			expected:  false,
 		},
 		{
 			name:      "not matched since differnt host name with port number for transHost only",
 			reqHost:   "host.com",
-			transHost: "abc.com:443",
+			transHost: "abc.com",
+			transPort: "443",
 			expected:  false,
 		},
 	}
 
-	for _, c := range cases {
+	for index, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := recyclableTransport{
 				host: c.transHost,
+				port: c.transPort,
 			}
-			v := r.compareHost(c.reqHost)
+			v := r.compareHost(&url.URL{Host: c.reqHost})
 			if v != c.expected {
-				t.Errorf("expected result \"%t\" is not same as we get: %t", c.expected, v)
+				t.Errorf("expected %d result \"%t\" is not same as we get: %t", index, c.expected, v)
+			}
+		})
+	}
+}
+
+func TestNew(t *testing.T) {
+	type args struct {
+		opts Options
+	}
+	tests := []struct {
+		name     string
+		args     args
+		wantHost string
+		wantPort string
+		paniced  bool
+	}{
+		{
+			name: "invalid host",
+			args: args{
+				opts: Options{
+					Host: "invalid:host:invalidport",
+				},
+			},
+			paniced: true,
+		},
+		{
+			name: "host is not assigned",
+			args: args{
+				opts: Options{
+					Host: ":445",
+				},
+			},
+			wantHost: "management.azure.com",
+			wantPort: "445",
+			paniced:  false,
+		},
+		{
+			name: "port is not assigned",
+			args: args{
+				opts: Options{
+					Host: "management.azure.com",
+				},
+			},
+			wantHost: "management.azure.com",
+			wantPort: "443",
+			paniced:  false,
+		},
+		{
+			name: "hosturl is not assigned",
+			args: args{
+				opts: Options{
+					Host: "",
+				},
+			},
+			wantHost: "management.azure.com",
+			wantPort: "443",
+			paniced:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.paniced {
+				defer func() {
+					if r := recover(); r != nil {
+						return
+					}
+					t.Errorf("New() did not panic")
+				}()
+			} else {
+				tt.args.opts.TransportFactory = func(id int, parent *http.Transport, host string, port string, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
+					if host != tt.wantHost {
+						t.Errorf("New() host = %v, want %v", host, tt.wantHost)
+					}
+					if port != tt.wantPort {
+						t.Errorf("New() port = %v, want %v", port, tt.wantPort)
+					}
+					return nil
+				}
+			}
+			if got := New(tt.args.opts); got == nil {
+				t.Errorf("New() returned nil")
 			}
 		})
 	}

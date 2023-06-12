@@ -3,7 +3,9 @@ package armbalancer
 import (
 	"fmt"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +34,9 @@ type Options struct {
 	// that a connections lands on an ARM instance that already has a depleted rate limiting quota.
 	// Default: 10
 	MinReqsBeforeRecycle int64
+
+	// TransportFactory is a function that creates a new transport for a given connection.
+	TransportFactory func(id int, parent *http.Transport, host string, port string, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper
 }
 
 // New wraps a transport to provide smart connection pooling and client-side load balancing.
@@ -41,6 +46,20 @@ func New(opts Options) http.RoundTripper {
 	}
 	if opts.Host == "" {
 		opts.Host = "management.azure.com"
+	}
+	if i := strings.Index(opts.Host, string(':')); i < 0 {
+		opts.Host += ":443"
+	}
+
+	host, port, err := net.SplitHostPort(opts.Host)
+	if err != nil {
+		panic(fmt.Sprintf("invalid host %q: %s", host, err))
+	}
+	if host == "" {
+		host = "management.azure.com"
+	}
+	if port == "" {
+		port = "443"
 	}
 	if opts.PoolSize == 0 {
 		opts.PoolSize = 8
@@ -52,9 +71,13 @@ func New(opts Options) http.RoundTripper {
 		opts.MinReqsBeforeRecycle = 10
 	}
 
+	if opts.TransportFactory == nil {
+		opts.TransportFactory = newRecyclableTransport
+	}
+
 	t := &transportPool{pool: make([]http.RoundTripper, opts.PoolSize)}
 	for i := range t.pool {
-		t.pool[i] = newRecyclableTransport(i, opts.Transport, opts.Host, opts.RecycleThreshold, opts.MinReqsBeforeRecycle)
+		t.pool[i] = newRecyclableTransport(i, opts.Transport, host, port, opts.RecycleThreshold, opts.MinReqsBeforeRecycle)
 	}
 	return t
 }
@@ -72,6 +95,7 @@ func (t *transportPool) RoundTrip(req *http.Request) (*http.Response, error) {
 type recyclableTransport struct {
 	lock        sync.Mutex // only hold while copying pointer - not calling RoundTrip
 	host        string
+	port        string
 	current     *http.Transport
 	counter     int64 // atomic
 	activeCount *sync.WaitGroup
@@ -79,11 +103,13 @@ type recyclableTransport struct {
 	signal      chan struct{}
 }
 
-func newRecyclableTransport(id int, parent *http.Transport, host string, recycleThreshold, minReqsBeforeRecycle int64) *recyclableTransport {
+func newRecyclableTransport(id int, parent *http.Transport, host string, port string, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
 	tx := parent.Clone()
 	tx.MaxConnsPerHost = 1
+
 	r := &recyclableTransport{
 		host:        host,
+		port:        port,
 		current:     tx.Clone(),
 		activeCount: &sync.WaitGroup{},
 		state:       newConnState(),
@@ -113,26 +139,19 @@ func newRecyclableTransport(id int, parent *http.Transport, host string, recycle
 }
 
 // return retrue if transport host matched with request host
-func (t *recyclableTransport) compareHost(reqHost string) bool {
-	idx := strings.Index(reqHost, ":")
-	idx1 := strings.Index(t.host, ":")
-
-	// both host have ":" or not, directly compare reqest host name with transport host
-	if idx == idx1 {
-		return reqHost == t.host
+func (t *recyclableTransport) compareHost(request *url.URL) bool {
+	parsedHostName := request.Hostname()
+	if t.host != parsedHostName {
+		return false
 	}
-
-	// reqHost has ":", but transportHost doesn't, compare reqHost with port-appened transport host
-	if idx != -1 {
-		return reqHost == t.host+reqHost[idx:]
+	if len(request.Host) == len(parsedHostName) {
+		return true
 	}
-
-	// reqHost doesn't have ":", but transportHost does, compare reqHost with non-port transport host
-	return reqHost == t.host[:idx1]
+	return t.port == request.Port()
 }
 
 func (t *recyclableTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	matched := t.compareHost(req.URL.Host)
+	matched := t.compareHost(req.URL)
 	if !matched {
 		return nil, fmt.Errorf("host %q is not supported by the configured ARM balancer, supported host name is %q", req.URL.Host, t.host)
 	}
