@@ -33,6 +33,8 @@ armresources.NewClient("{{subscriptionID}}", cred, &arm.ClientOptions{
 })
 ```
 
+It works better when go.uber.org/automaxprocs is enabled.
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
