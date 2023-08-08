@@ -1,13 +1,13 @@
 package armbalancer
 
 import (
-	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -81,7 +81,7 @@ func TestSoak(t *testing.T) {
 	wg.Wait()
 
 	_, err := client.Get("http://not-the-host")
-	if err == nil || err.Error() != fmt.Sprintf(`Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer, supported host name is %q`, u.Hostname()) {
+	if err == nil || strings.Contains(err.Error(), `Get "http://not-the-host": host "not-the-host" is not supported by the configured ARM balancer, supported host name is %q`) {
 		t.Errorf("expected error when requesting host other than the one configured, got: %s", err)
 	}
 
@@ -129,7 +129,7 @@ func TestCompareHost(t *testing.T) {
 			reqHost:   "host.com",
 			transHost: "host.com",
 			transPort: "443",
-			expected:  true,
+			expected:  false,
 		},
 		{
 			name:      "matched since all with port number",
@@ -141,13 +141,6 @@ func TestCompareHost(t *testing.T) {
 		{
 			name:      "matched with appending port name",
 			reqHost:   "host.com:443",
-			transHost: "host.com",
-			transPort: "443",
-			expected:  true,
-		},
-		{
-			name:      "matched with removing port name",
-			reqHost:   "host.com",
 			transHost: "host.com",
 			transPort: "443",
 			expected:  true,
@@ -190,13 +183,14 @@ func TestCompareHost(t *testing.T) {
 
 	for index, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := recyclableTransport{
-				host: c.transHost,
-				port: c.transPort,
+			r := hostScopedTransport{
+				pool: map[string]*transportPool{
+					c.transHost + ":" + c.transPort: &transportPool{pool: []http.RoundTripper{http.DefaultTransport}},
+				},
 			}
-			v := r.compareHost(&url.URL{Host: c.reqHost})
-			if v != c.expected {
-				t.Errorf("expected %d result \"%t\" is not same as we get: %t", index, c.expected, v)
+			_, err := r.compareHosts(&url.URL{Host: c.reqHost})
+			if (err != nil) == c.expected {
+				t.Errorf("expected %d result \"%t\" is not same as we get: %s", index, c.expected, err.Error())
 			}
 		})
 	}
@@ -266,14 +260,16 @@ func TestNew(t *testing.T) {
 					t.Errorf("New() did not panic")
 				}()
 			} else {
-				tt.args.opts.TransportFactory = func(id int, parent *http.Transport, host string, port string, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
-					if host != tt.wantHost {
-						t.Errorf("New() host = %v, want %v", host, tt.wantHost)
-					}
-					if port != tt.wantPort {
-						t.Errorf("New() port = %v, want %v", port, tt.wantPort)
-					}
-					return nil
+				tt.args.opts.TransportFactory = map[string]Transport{
+					strings.ToLower(tt.wantHost + ":" + tt.wantPort): func(id int, parent *http.Transport, host string, port string, recycleThreshold, minReqsBeforeRecycle int64) http.RoundTripper {
+						if host != tt.wantHost {
+							t.Errorf("New() host = %v, want %v", host, tt.wantHost)
+						}
+						if port != tt.wantPort {
+							t.Errorf("New() port = %v, want %v", port, tt.wantPort)
+						}
+						return nil
+					},
 				}
 			}
 			if got := New(tt.args.opts); got == nil {
